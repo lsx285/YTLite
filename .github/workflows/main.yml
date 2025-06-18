@@ -1,16 +1,13 @@
 name: Create YouTube Plus app
-
 on:
   workflow_dispatch:
     inputs:
       ipa_url:
         description: "URL to the decrypted IPA file"
-        default: ""
         required: true
         type: string
-
       tweak_version:
-        description: "The version of the tweak to use. Enter the version manually from dayanch96/YTLite/releases or leave default"
+        description: "The version of the tweak to use"
         default: "5.2b1"
         required: true
         type: string
@@ -24,85 +21,44 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
-
     steps:
       - name: Checkout Main
-        uses: actions/checkout@v4.1.1
+        uses: actions/checkout@v4
         with:
           path: main
           submodules: recursive
 
-      - name: Hide sensitive inputs
-        uses: levibostian/action-hide-sensitive-inputs@v1
-
-      - name: Validate IPA URL
+      - name: Setup Environment
         run: |
-          curl -L -r 0-1023 -o sample.part "${{ inputs.ipa_url }}" > /dev/null 2>&1
-          file_type=$(file --mime-type -b sample.part)
-
-          if [[ "$file_type" != "application/x-ios-app" && "$file_type" != "application/zip" ]]; then
-            echo "::error::Validation failed: The file is not a valid IPA file. Detected type: $file_type."
-            exit 1
-          fi
-
-      - name: Install Dependencies
-        run: brew install make ldid
-
-      - name: Set PATH environment variable
-        run: echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          brew install make ldid
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          pipx install --force https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
 
       - name: Cache Theos
         id: theos
         uses: actions/cache@v4
-        env:
-          cache-name: theos_cache_67db2ab
         with:
           path: theos/
-          key: ${{ env.cache-name }}
-          restore-keys: ${{ env.cache-name }}
+          key: theos_cache_67db2ab
+          restore-keys: theos_cache_67db2ab
 
       - name: Setup Theos
         if: steps.theos.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4.1.7
-        with:
-          repository: theos/theos
-          ref: 67db2ab8d950910161730de77c322658ea3e6b44
-          path: ${{ github.workspace }}/theos
-          submodules: recursive
-
-      - name: Download iOS SDK
-        if: steps.theos.outputs.cache-hit != 'true'
         run: |
+          git clone --quiet --depth=1 https://github.com/theos/theos.git -b 67db2ab8d950910161730de77c322658ea3e6b44 theos
           git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/theos/sdks/
-          cd sdks
-          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
-          git checkout
-          mv *.sdk $THEOS/sdks
-        env:
-          THEOS: ${{ github.workspace }}/theos
+          cd sdks && git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+          git checkout && mv *.sdk theos/sdks
 
-      - name: Install cyan
-        run: pipx install --force https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
-
-      - name: Download YouTube Plus tweak
+      - name: Download and Build
         run: |
-          deb_url="https://github.com/dayanch96/YTLite/releases/download/v${{ inputs.tweak_version }}/com.dvntm.ytlite_${{ inputs.tweak_version }}_iphoneos-arm.deb"
-          wget "$deb_url" --no-verbose -O ${{ github.workspace }}/ytplus.deb
-
-      - name: Download YouTube IPA
-        run: wget "${{ inputs.ipa_url }}" --no-verbose -O ${{ github.workspace }}/youtube.ipa
-
-      - name: Inject YouTube Plus tweak into IPA
-        run: |
+          wget "https://github.com/dayanch96/YTLite/releases/download/v${{ inputs.tweak_version }}/com.dvntm.ytlite_${{ inputs.tweak_version }}_iphoneos-arm.deb" -O ytplus.deb
+          wget "${{ inputs.ipa_url }}" -O youtube.ipa
           cyan -i youtube.ipa -o YouTubePlus_${{ inputs.tweak_version }}.ipa -uwef ytplus.deb -n "YouTube" -b "com.google.ios.youtube"
 
-      - name: Upload to GitHub Releases
-        uses: softprops/action-gh-release@v2.0.1
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
         with:
           name: YouTubePlus v${{ inputs.tweak_version }} (${{ github.run_number }})
           files: YouTubePlus_${{ inputs.tweak_version }}.ipa
           draft: true
-
-      - name: Output Release URL
-        run: |
-          echo "::notice::Release available at: https://github.com/${{ github.repository }}/releases"
